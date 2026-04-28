@@ -10,7 +10,7 @@ import {
   Activity,
   User,
   Settings,
-  Monitor,Q
+  Monitor,
   X,
   Clock,
   ChefHat,
