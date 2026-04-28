@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as THREE from 'three';
 import { 
   Coffee, 
   TrendingUp, 
@@ -388,11 +389,17 @@ export default function App() {
         let newPopupsToSpawn = [];
         const id = Date.now();
 
-        if (earnedThisTick > 0) {
-          const maxVisualCustomers = Math.min(soldThisTick, 15); // Tripled the visual max!
-          const newCusts = Array.from({ length: maxVisualCustomers }).map((_, i) => ({
+        const shouldShowWaitingCustomers = earnedThisTick <= 0 && currentDemandTick > 0;
+        const visualCustomerCount = earnedThisTick > 0
+          ? Math.min(soldThisTick, 15)
+          : (shouldShowWaitingCustomers ? Math.min(currentDemandTick, 4) : 0);
+
+        if (visualCustomerCount > 0) {
+          const newCusts = Array.from({ length: visualCustomerCount }).map((_, i) => ({
             id: `${id}-cust-${i}`,
-            x: 10 + Math.random() * 80, // Spread across the whole counter better
+            x: 12 + Math.random() * 76, // Spread across the whole counter better
+            startZ: 30 + Math.random() * 6,
+            targetZ: 13 + Math.random() * 7,
             color: ['bg-blue-400', 'bg-emerald-400', 'bg-rose-400', 'bg-purple-400', 'bg-amber-400', 'bg-cyan-400'][Math.floor(Math.random()*6)]
           }));
           
@@ -403,15 +410,17 @@ export default function App() {
             if (gameIdRef.current !== currentTickGameId) return; 
 
             setCustomers(c => c.filter(x => !newCusts.find(n => n.id === x.id)));
-            // Money popup directly from customer location
-            const newMoneyPopups = newCusts.map(c => ({ id: c.id, amount: earnedThisTick / newCusts.length, left: c.x, color: 'text-emerald-400' }));
-            setPopups(p => [...p, ...newMoneyPopups]);
-            
-            setTimeout(() => {
-              if (gameIdRef.current !== currentTickGameId) return; // Prevent ghosts
-              setPopups(p => p.filter(x => !newMoneyPopups.find(n => n.id === x.id)));
-            }, 1000);
-          }, 2500); // Customers stay at counter a little longer
+            if (earnedThisTick > 0) {
+              // Money popup directly from customer location
+              const newMoneyPopups = newCusts.map(c => ({ id: c.id, amount: earnedThisTick / newCusts.length, left: c.x, color: 'text-emerald-400' }));
+              setPopups(p => [...p, ...newMoneyPopups]);
+              
+              setTimeout(() => {
+                if (gameIdRef.current !== currentTickGameId) return; // Prevent ghosts
+                setPopups(p => p.filter(x => !newMoneyPopups.find(n => n.id === x.id)));
+              }, 1000);
+            }
+          }, earnedThisTick > 0 ? 3500 : 5500); // Waiting customers linger so the shop feels alive
         }
 
         if (brewedThisTick > 0) {
@@ -557,9 +566,7 @@ export default function App() {
       }
 
       // 2. ALWAYS Update 3D Scene (even if menu is open, so purchases show up live)
-      if (window.THREE && sceneRef.current && rendererRef.current && meshesRef.current.player) {
-        const THREE = window.THREE;
-
+      if (sceneRef.current && rendererRef.current && meshesRef.current.player) {
         // --- CINEMATIC CAMERA FOR START SCREEN ---
         if (!gameStartedRef.current) {
           const time = Date.now() / 3000;
@@ -613,9 +620,9 @@ export default function App() {
             armR.castShadow = true;
             group.add(armR);
 
-            group.position.set(cust.x - 50, 0, 50); // Start at bottom screen edge
+            group.position.set(cust.x - 50, 0, cust.startZ || 35);
             sceneRef.current.add(group);
-            meshesRef.current[cust.id] = { mesh: group, targetZ: 11 + Math.random() * 3, hopOffset: Math.random() * Math.PI * 2 };
+            meshesRef.current[cust.id] = { mesh: group, targetZ: cust.targetZ || (11 + Math.random() * 3), hopOffset: Math.random() * Math.PI * 2 };
           }
         });
 
@@ -750,18 +757,13 @@ export default function App() {
 
   // --- THREE.JS INITIALIZATION ---
   useEffect(() => {
-    if (!window.THREE) {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-      script.onload = initializeScene;
-      document.head.appendChild(script);
-    } else {
-      initializeScene();
-    }
+    return initializeScene();
 
     function initializeScene() {
       if (!mountRef.current) return;
-      const THREE = window.THREE;
+      mountRef.current.querySelectorAll('canvas').forEach(canvas => canvas.remove());
+      meshesRef.current = {};
+
       const scene = new THREE.Scene();
       scene.background = new THREE.Color('#1c1917');
       sceneRef.current = scene;
@@ -773,17 +775,27 @@ export default function App() {
 
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.25;
       renderer.shadowMap.enabled = true;
+      renderer.domElement.style.display = 'block';
+      renderer.domElement.style.width = '100%';
+      renderer.domElement.style.height = '100%';
       mountRef.current.appendChild(renderer.domElement);
       rendererRef.current = renderer;
 
       // Lights
-      const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+      const ambient = new THREE.AmbientLight(0xffffff, 0.9);
       scene.add(ambient);
-      const dirLight = new THREE.DirectionalLight(0xffdfb0, 0.8);
-      dirLight.position.set(20, 50, 20);
+      const dirLight = new THREE.DirectionalLight(0xffdfb0, 1.2);
+      dirLight.position.set(15, 55, 35);
       dirLight.castShadow = true;
       scene.add(dirLight);
+
+      const fillLight = new THREE.HemisphereLight(0xfef3c7, 0x292524, 0.7);
+      scene.add(fillLight);
 
       // Floor
       const floorGeo = new THREE.PlaneGeometry(100, 100);
@@ -965,14 +977,20 @@ export default function App() {
         camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       };
       window.addEventListener('resize', onResize);
 
       return () => {
         window.removeEventListener('resize', onResize);
-        if (mountRef.current && renderer.domElement) {
+        if (mountRef.current && renderer.domElement.parentNode === mountRef.current) {
           mountRef.current.removeChild(renderer.domElement);
         }
+        renderer.dispose();
+        if (sceneRef.current === scene) sceneRef.current = null;
+        if (cameraRef.current === camera) cameraRef.current = null;
+        if (rendererRef.current === renderer) rendererRef.current = null;
+        meshesRef.current = {};
       };
     }
   }, []);
